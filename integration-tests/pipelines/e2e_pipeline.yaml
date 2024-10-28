@@ -144,7 +144,8 @@ spec:
               - name: credentials
                 value: credentials
   finally:
-    - taskSpec:
+    - name: grab-artifacts-final
+      taskSpec:
         volumes:
           - name: credentials
             emptyDir: {}
