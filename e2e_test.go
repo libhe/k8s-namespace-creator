@@ -17,6 +17,8 @@ var (
 )
 
 func TestE2E(t *testing.T) {
+	// Register Gomega fail handler with Ginkgo
+	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "E2E Suite")
 }
 
