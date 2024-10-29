@@ -144,13 +144,14 @@ spec:
               - name: credentials
                 value: credentials
   finally:
-    - taskSpec:
+    - name: grab-artifacts-final
+      taskSpec:
         volumes:
           - name: credentials
             emptyDir: {}
-          - name: konflux-secret-volume
+          - name: konflux-test-infra-volume
             secret:
-              secretName: konflux-e2e-secrets
+              secretName: konflux-test-infra
         steps:
           - name: get-kubeconfig
             ref:
@@ -170,7 +171,7 @@ spec:
               - name: credentials
                 value: credentials
           - name: e2e-test
-            image: quay.io/konflux-qe-incubator/konflux-qe-tools:latest
+            image: golang:1.22
             volumeMounts:
               - name: credentials
                 mountPath: /credentials
@@ -183,4 +184,8 @@ spec:
               - name: KUBECONFIG
                 value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
             script: |
-              oc whoami
+              export GOBIN=$GOPATH/bin
+
+              go install github.com/onsi/ginkgo/v2/ginkgo
+              git clone -b appstudio-k8s-namespace-creator https://github.com/konflux-ci-samples/k8s-namespace-creator .
+              ginkgo -v ./...
