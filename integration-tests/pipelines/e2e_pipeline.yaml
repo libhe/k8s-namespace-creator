@@ -186,6 +186,6 @@ spec:
             script: |
               export GOBIN=$GOPATH/bin
 
-              go install github.com/onsi/ginkgo/v2/ginkgo
+              go install github.com/onsi/ginkgo/v2/ginkgo@latest
               git clone -b appstudio-k8s-namespace-creator https://github.com/konflux-ci-samples/k8s-namespace-creator .
-              ginkgo -v ./...
+              ginkgo -v ./... 
