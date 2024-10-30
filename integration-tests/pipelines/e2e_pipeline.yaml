@@ -12,7 +12,7 @@ spec:
       default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
       type: string
     - name: oci-container-repo
-      default: 'quay.io/konflux-test-storage/konflux-team/e2e-tests'
+      default: 'quay.io/konflux-test-storage/quality-camp/k8s-demo'
       description: The ORAS container used to store all test artifacts.
   tasks:
     - name: create-oci-container
@@ -148,9 +148,6 @@ spec:
             volumeMounts:
               - name: quay-secret-volume
                 mountPath: /usr/local/quay-io-secret
-            params:
-              - name: oci-container
-                value: $(tasks.create-oci-container.results.oci-container)
             workingDir: /workspace
             env:
               - name: JOB_NAME
@@ -159,15 +156,20 @@ spec:
                 value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
             script: |
               export GOBIN=$GOPATH/bin
+              export ORAS_CONTAINER=$(tasks.create-oci-container.results.oci-container)
               export ARTIFACT_DIR="/workspace/artifacts"
+              export OCI_STORAGE_USERNAME="/usr/local/quay-io-secret/quay-username"
+              export OCI_STORAGE_TOKEN="/usr/local/quay-io-secret/quay-token"
 
               post_actions() {
                   local exit_code=$?
                   local temp_annotation_file="$(mktemp -d)"
 
+                  cd "$ARTIFACT_DIR"
+
                   # Fetch the manifest annotations for the container
                   if ! MANIFESTS=$(oras manifest fetch "${ORAS_CONTAINER}" | jq .annotations); then
-                      log "ERROR" "Failed to fetch manifest from ${OCI_STORAGE_CONTAINER}"
+                      echo -e "Failed to fetch manifest from ${ORAS_CONTAINER}"
                       exit 1
                   fi
 
@@ -178,10 +180,10 @@ spec:
                   local attempt=1
                   while ! oras push "$ORAS_CONTAINER" --username="${OCI_STORAGE_USERNAME}" --password="${OCI_STORAGE_TOKEN}" --annotation-file "${temp_annotation_file}" ./:application/vnd.acme.rocket.docs.layer.v1+tar; do
                       if [[ $attempt -ge 5 ]]; then
-                          log "ERROR" "oras push failed after $attempt attempts."
+                          echo - "oras push failed after $attempt attempts."
                           exit 1
                       fi
-                      log "WARNING" "oras push failed (attempt $attempt). Retrying in 5 seconds..."
+                      echo -e "oras push failed (attempt $attempt). Retrying in 5 seconds..."
                       sleep 5
                       ((attempt++))
                   done
@@ -198,6 +200,9 @@ spec:
               mv oras-install/oras $GOPATH/bin
               rm -rf oras_${VERSION}_*.tar.gz oras-install/
 
+              curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64" -o $GOPATH/bin/jq
+              chmod +x $GOPATH/bin/jq
+              jq --version
               oras version
 
               go install github.com/onsi/ginkgo/v2/ginkgo@latest
