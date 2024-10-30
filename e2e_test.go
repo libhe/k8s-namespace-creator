@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -24,7 +25,7 @@ func TestE2E(t *testing.T) {
 
 var _ = ginkgo.BeforeSuite(func() {
 	// Load kubeconfig from the default location
-	kubeconfig := clientcmd.RecommendedHomeFile // Directly use the default kubeconfig path
+	kubeconfig := os.Getenv("KUBECONFIG")
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

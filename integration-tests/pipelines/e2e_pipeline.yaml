@@ -5,7 +5,7 @@ metadata:
   name: provision-cluster
 spec:
   description: |
-    An integration test which provisions an ephemeral Hypershift cluster and obtains a kubeconfig.
+    An integration test which provisions an ephemeral Hypershift cluster.
   params:
     - description: Snapshot of the application
       name: SNAPSHOT
@@ -122,9 +122,9 @@ spec:
         volumes:
           - name: credentials
             emptyDir: {}
-          - name: konflux-secret-volume
+          - name: quay-secret-volume
             secret:
-              secretName: konflux-e2e-secrets
+              secretName: quay-io-secret
         steps:
           - name: get-kubeconfig
             ref:
@@ -143,6 +143,66 @@ spec:
                 value: "$(tasks.provision-cluster.results.clusterName)"
               - name: credentials
                 value: credentials
+          - name: e2e-test
+            image: golang:1.22
+            volumeMounts:
+              - name: quay-secret-volume
+                mountPath: /usr/local/quay-io-secret
+            params:
+              - name: oci-container
+                value: $(tasks.create-oci-container.results.oci-container)
+            workingDir: /workspace
+            env:
+              - name: JOB_NAME
+                value: $(context.pipelineRun.name)
+              - name: KUBECONFIG
+                value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
+            script: |
+              export GOBIN=$GOPATH/bin
+              export ARTIFACT_DIR="/workspace/artifacts"
+
+              post_actions() {
+                  local exit_code=$?
+                  local temp_annotation_file="$(mktemp -d)"
+
+                  # Fetch the manifest annotations for the container
+                  if ! MANIFESTS=$(oras manifest fetch "${ORAS_CONTAINER}" | jq .annotations); then
+                      log "ERROR" "Failed to fetch manifest from ${OCI_STORAGE_CONTAINER}"
+                      exit 1
+                  fi
+
+                  jq -n --argjson manifest "$MANIFESTS" '{ "$manifest": $manifest }' > "${temp_annotation_file}"
+
+                  oras pull "${ORAS_CONTAINER}"
+
+                  local attempt=1
+                  while ! oras push "$ORAS_CONTAINER" --username="${OCI_STORAGE_USERNAME}" --password="${OCI_STORAGE_TOKEN}" --annotation-file "${temp_annotation_file}" ./:application/vnd.acme.rocket.docs.layer.v1+tar; do
+                      if [[ $attempt -ge 5 ]]; then
+                          log "ERROR" "oras push failed after $attempt attempts."
+                          exit 1
+                      fi
+                      log "WARNING" "oras push failed (attempt $attempt). Retrying in 5 seconds..."
+                      sleep 5
+                      ((attempt++))
+                  done
+
+                  exit "$exit_code"
+              }
+
+              trap post_actions EXIT
+
+              VERSION="1.2.0"
+              curl -LO "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_linux_amd64.tar.gz"
+              mkdir -p oras-install/
+              tar -zxf oras_${VERSION}_*.tar.gz -C oras-install/
+              mv oras-install/oras $GOPATH/bin
+              rm -rf oras_${VERSION}_*.tar.gz oras-install/
+
+              oras version
+
+              go install github.com/onsi/ginkgo/v2/ginkgo@latest
+              git clone -b appstudio-k8s-namespace-creator https://github.com/konflux-ci-samples/k8s-namespace-creator .
+              ginkgo --junit-report "$ARTIFACT_DIR"/junit_sample.xml
   finally:
     - name: grab-artifacts-final
       taskSpec:
@@ -175,6 +235,8 @@ spec:
             volumeMounts:
               - name: credentials
                 mountPath: /credentials
+              - name: artifacts
+                mountPath: /artifacts
               - name: konflux-test-infra-volume
                 mountPath: /usr/local/konflux-test-infra
             workingDir: /workspace
@@ -184,8 +246,4 @@ spec:
               - name: KUBECONFIG
                 value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
             script: |
-              export GOBIN=$GOPATH/bin
-
-              go install github.com/onsi/ginkgo/v2/ginkgo@latest
-              git clone -b appstudio-k8s-namespace-creator https://github.com/konflux-ci-samples/k8s-namespace-creator .
-              ginkgo -v ./... 
+              ls -larth /artifacts
