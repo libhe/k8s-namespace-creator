@@ -161,9 +161,12 @@ spec:
               export OCI_STORAGE_USERNAME="/usr/local/quay-io-secret/quay-username"
               export OCI_STORAGE_TOKEN="/usr/local/quay-io-secret/quay-token"
 
+              # Ensure ARTIFACT_DIR exists
+              mkdir -p "$ARTIFACT_DIR"
+
               post_actions() {
                   local exit_code=$?
-                  local temp_annotation_file="$(mktemp -d)"
+                  local temp_annotation_file="$(mktemp)"
 
                   cd "$ARTIFACT_DIR"
 
