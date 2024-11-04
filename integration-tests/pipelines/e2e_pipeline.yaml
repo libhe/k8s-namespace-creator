@@ -122,101 +122,6 @@ spec:
         volumes:
           - name: credentials
             emptyDir: {}
-          - name: quay-secret-volume
-            secret:
-              secretName: quay-io-secret
-        steps:
-          - name: get-kubeconfig
-            ref:
-              resolver: git
-              params:
-                - name: url
-                  value: https://github.com/konflux-ci/build-definitions.git
-                - name: revision
-                  value: main
-                - name: pathInRepo
-                  value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
-            params:
-              - name: eaasSpaceSecretRef
-                value: $(tasks.provision-eaas-space.results.secretRef)
-              - name: clusterName
-                value: "$(tasks.provision-cluster.results.clusterName)"
-              - name: credentials
-                value: credentials
-          - name: e2e-test
-            image: golang:1.22
-            volumeMounts:
-              - name: quay-secret-volume
-                mountPath: /usr/local/quay-io-secret
-            workingDir: /workspace
-            env:
-              - name: JOB_NAME
-                value: $(context.pipelineRun.name)
-              - name: KUBECONFIG
-                value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
-            script: |
-              export GOBIN=$GOPATH/bin
-              export ORAS_CONTAINER=$(tasks.create-oci-container.results.oci-container)
-              export ARTIFACT_DIR="/workspace/artifacts"
-              export OCI_STORAGE_USERNAME="/usr/local/quay-io-secret/quay-username"
-              export OCI_STORAGE_TOKEN="/usr/local/quay-io-secret/quay-token"
-
-              # Ensure ARTIFACT_DIR exists
-              mkdir -p "$ARTIFACT_DIR"
-
-              post_actions() {
-                  local exit_code=$?
-                  local temp_annotation_file="$(mktemp)"
-
-                  cd "$ARTIFACT_DIR"
-
-                  # Fetch the manifest annotations for the container
-                  if ! MANIFESTS=$(oras manifest fetch "${ORAS_CONTAINER}" | jq .annotations); then
-                      echo -e "Failed to fetch manifest from ${ORAS_CONTAINER}"
-                      exit 1
-                  fi
-
-                  jq -n --argjson manifest "$MANIFESTS" '{ "$manifest": $manifest }' > "${temp_annotation_file}"
-
-                  oras pull "${ORAS_CONTAINER}"
-
-                  local attempt=1
-                  while ! oras push "$ORAS_CONTAINER" --username="${OCI_STORAGE_USERNAME}" --password="${OCI_STORAGE_TOKEN}" --annotation-file "${temp_annotation_file}" ./:application/vnd.acme.rocket.docs.layer.v1+tar; do
-                      if [[ $attempt -ge 5 ]]; then
-                          echo - "oras push failed after $attempt attempts."
-                          exit 1
-                      fi
-                      echo -e "oras push failed (attempt $attempt). Retrying in 5 seconds..."
-                      sleep 5
-                      ((attempt++))
-                  done
-
-                  exit "$exit_code"
-              }
-
-              trap post_actions EXIT
-
-              VERSION="1.2.0"
-              curl -LO "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_linux_amd64.tar.gz"
-              mkdir -p oras-install/
-              tar -zxf oras_${VERSION}_*.tar.gz -C oras-install/
-              mv oras-install/oras $GOPATH/bin
-              rm -rf oras_${VERSION}_*.tar.gz oras-install/
-
-              curl -L "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64" -o $GOPATH/bin/jq
-              chmod +x $GOPATH/bin/jq
-              jq --version
-              oras version
-
-              go install github.com/onsi/ginkgo/v2/ginkgo@latest
-              git clone -b appstudio-k8s-namespace-creator https://github.com/konflux-ci-samples/k8s-namespace-creator .
-              ginkgo --junit-report "$ARTIFACT_DIR"/junit_sample.xml
-  finally:
-    - name: grab-artifacts-final
-      taskSpec:
-        volumes:
-          - name: credentials
-            emptyDir: {}
           - name: konflux-test-infra-volume
             secret:
               secretName: konflux-test-infra
@@ -239,19 +144,33 @@ spec:
               - name: credentials
                 value: credentials
           - name: e2e-test
-            image: golang:1.22
+            image: quay.io/flacatus/go-test-tools:latest
             volumeMounts:
-              - name: credentials
-                mountPath: /credentials
-              - name: artifacts
-                mountPath: /artifacts
               - name: konflux-test-infra-volume
                 mountPath: /usr/local/konflux-test-infra
+              - name: credentials
+                mountPath: /credentials
             workingDir: /workspace
             env:
-              - name: JOB_NAME
-                value: $(context.pipelineRun.name)
+              - name: JOB_SPEC
+                value: $(tasks.test-metadata.results.job-spec)
               - name: KUBECONFIG
                 value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
             script: |
-              ls -larth /artifacts
+              #!/bin/bash
+
+              export GOBIN=$GOPATH/bin
+              export OCI_STORAGE_CONTAINER=$(tasks.create-oci-container.results.oci-container)
+
+              echo "The job metadata is:"
+              echo "$JOB_SPEC" | jq .
+
+              GIT_URL="${GIT_URL:-$(echo "$JOB_SPEC" | jq -r '.git.source_repo_url')}"
+              GIT_REVISION="${GIT_REVISION:-$(echo "$JOB_SPEC" | jq -r '.git.commit_sha')}"
+
+              echo -e "INFO: Cloning repository '$GIT_REPO' with revision '$GIT_REVISION' from URL '$GIT_URL'"
+              cd $(mktemp -d)
+              git clone "${GIT_URL}" .
+              git checkout "${GIT_REVISION}"
+
+              /bin/bash integration-tests/scripts/run_e2e_tests.sh
