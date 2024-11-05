@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -17,20 +18,22 @@ var (
 )
 
 func TestE2E(t *testing.T) {
+	// Register Gomega fail handler with Ginkgo
+	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "E2E Suite")
 }
 
+var _ = ginkgo.BeforeSuite(func() {
+	// Load kubeconfig from the default location
+	kubeconfig := os.Getenv("KUBECONFIG")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	clientset, err = kubernetes.NewForConfig(config)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+})
+
 var _ = ginkgo.Describe("Namespace E2E Tests", func() {
-	ginkgo.BeforeSuite(func() {
-		// Load kubeconfig from the default location
-		kubeconfig := clientcmd.RecommendedHomeFile // Directly use the default kubeconfig path
-		config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		clientset, err = kubernetes.NewForConfig(config)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
 	ginkgo.Context("when creating and checking the namespace", func() {
 		ginkgo.It("should exist after creation", func() {
 			// Create the namespace using the function from main package
@@ -42,10 +45,10 @@ var _ = ginkgo.Describe("Namespace E2E Tests", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 	})
+})
 
-	ginkgo.AfterSuite(func() {
-		// Cleanup: Delete the namespace after tests
-		err := deleteNamespace(clientset, namespace)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
+var _ = ginkgo.AfterSuite(func() {
+	// Cleanup: Delete the namespace after tests
+	err := deleteNamespace(clientset, namespace)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })

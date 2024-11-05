@@ -5,14 +5,14 @@ metadata:
   name: provision-cluster
 spec:
   description: |
-    An integration test which provisions an ephemeral Hypershift cluster and obtains a kubeconfig.
+    An integration test which provisions an ephemeral Hypershift cluster.
   params:
     - description: Snapshot of the application
       name: SNAPSHOT
       default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
       type: string
     - name: oci-container-repo
-      default: 'quay.io/konflux-test-storage/konflux-team/e2e-tests'
+      default: 'quay.io/konflux-test-storage/quality-camp/k8s-demo'
       description: The ORAS container used to store all test artifacts.
   tasks:
     - name: create-oci-container
@@ -122,36 +122,9 @@ spec:
         volumes:
           - name: credentials
             emptyDir: {}
-          - name: konflux-secret-volume
+          - name: konflux-test-infra-volume
             secret:
-              secretName: konflux-e2e-secrets
-        steps:
-          - name: get-kubeconfig
-            ref:
-              resolver: git
-              params:
-                - name: url
-                  value: https://github.com/konflux-ci/build-definitions.git
-                - name: revision
-                  value: main
-                - name: pathInRepo
-                  value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
-            params:
-              - name: eaasSpaceSecretRef
-                value: $(tasks.provision-eaas-space.results.secretRef)
-              - name: clusterName
-                value: "$(tasks.provision-cluster.results.clusterName)"
-              - name: credentials
-                value: credentials
-  finally:
-    - name: grab-artifacts-final
-      taskSpec:
-        volumes:
-          - name: credentials
-            emptyDir: {}
-          - name: konflux-secret-volume
-            secret:
-              secretName: konflux-e2e-secrets
+              secretName: konflux-test-infra
         steps:
           - name: get-kubeconfig
             ref:
@@ -171,17 +144,33 @@ spec:
               - name: credentials
                 value: credentials
           - name: e2e-test
-            image: quay.io/konflux-qe-incubator/konflux-qe-tools:latest
+            image: quay.io/flacatus/go-test-tools:latest
             volumeMounts:
-              - name: credentials
-                mountPath: /credentials
               - name: konflux-test-infra-volume
                 mountPath: /usr/local/konflux-test-infra
+              - name: credentials
+                mountPath: /credentials
             workingDir: /workspace
             env:
-              - name: JOB_NAME
-                value: $(context.pipelineRun.name)
+              - name: JOB_SPEC
+                value: $(tasks.test-metadata.results.job-spec)
               - name: KUBECONFIG
                 value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
             script: |
-              oc whoami
+              #!/bin/bash
+
+              export GOBIN=$GOPATH/bin
+              export OCI_STORAGE_CONTAINER=$(tasks.create-oci-container.results.oci-container)
+
+              echo "The job metadata is:"
+              echo "$JOB_SPEC" | jq .
+
+              GIT_URL="${GIT_URL:-$(echo "$JOB_SPEC" | jq -r '.git.source_repo_url')}"
+              GIT_REVISION="${GIT_REVISION:-$(echo "$JOB_SPEC" | jq -r '.git.commit_sha')}"
+
+              echo -e "INFO: Cloning repository '$GIT_REPO' with revision '$GIT_REVISION' from URL '$GIT_URL'"
+              cd $(mktemp -d)
+              git clone "${GIT_URL}" .
+              git checkout "${GIT_REVISION}"
+
+              /bin/bash integration-tests/scripts/run_e2e_tests.sh

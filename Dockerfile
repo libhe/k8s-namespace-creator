@@ -1,5 +1,5 @@
 # Stage 1: Build the Go application
-FROM golang:1.22 AS builder
+FROM quay.io/flacatus/go-test-tools:latest AS builder
 
 # Set the working directory
 WORKDIR /app
