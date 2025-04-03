@@ -9,7 +9,7 @@ spec:
   params:
     - description: Snapshot of the application
       name: SNAPSHOT
-      default: '{"components": [{"name":"test-app", "containerImage": "quay.io/example/repo:latest"}]}'
+      default: '{"components": [{"name":"test-app", "containerImage": "quay.io/libhe/demo"}]}'
       type: string
     - name: oci-container-repo
       default: 'quay.io/konflux-test-storage/quality-camp/k8s-demo'
