@@ -1,4 +1,4 @@
-FROM golang:1.22
+FROM golang:1.24
 
 # renovate: datasource=repology depName=homebrew/openshift-cli
 ARG OC_VERSION=4.15.37
